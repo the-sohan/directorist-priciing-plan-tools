@@ -1,4 +1,35 @@
-# Directorist Support Tools
+# Directorist Support Tools 1.1.0
+
+Manual tools with preview, transactional backup and restoration. Activation does not repair data. There are two separate Tools pages:
+
+- **Directorist Support Tools** repairs invalid plan display priorities.
+- **Directorist Migration Recovery** recovers the specific completed-marker / unfinished-listing-progress conflict described below.
+
+## Listing migration recovery
+
+Use this action when `listing-plan-meta-v4-0-2` is already recorded in `directorist_pricing_plans_migrations`, but `directorist_listing_plan_meta_migration_state` still contains valid `running` progress. For example, the notice stays at **250 of 967** and the normal runner skips the listing migration.
+
+The recovery currently accepts **Pricing Plans 4.2.0** with the exact verified `ListingPlanMetaMigration.php` implementation. Other versions, modified migration source, failed progress, missing tables and ordinary unmarked migrations are rejected before recovery.
+
+1. Install or update the ZIP, activate it, then open **Tools → Directorist Migration Recovery**.
+2. Review the saved progress, current number of remaining listings, and assignment preview. Expand the listing table to review IDs, existing plan values and eligible package plans.
+3. Confirm the reviewed batch and choose **Recover next … listings**. Each click runs at most 250 listings through Pricing Plans' own listing migration.
+4. Review and run subsequent batches until the page reports completion and the migration progress notice disappears. For 717 remaining listings, this normally takes three batches: 250, 250 and 217. If an exact-size final batch leaves no listings remaining, choose **Finalize saved migration** to finish the native completion step.
+5. Download the recovery backup, verify the affected listings, and deactivate the tool.
+
+The tool deliberately keeps the existing completed marker in place while invoking only the listing migration directly. This prevents the normal runner from taking over the same listing recovery between manual batches. It does not reset the cursor, re-run the full v4 migration, or invoke package/date repairs.
+
+The native migration normalizes `_plan_id` to an eligible package's plan. Valid legacy assignments and listings without an eligible package retain their values. The displayed historical total may differ from the current listing count. The preview includes all post statuses, matching the native migration.
+
+Each committed batch stores its affected listings' prior and expected `_plan_id` values, including duplicates in their original order, alongside the original migration progress. The backup and native changes share one InnoDB transaction. A database error or unexpected assignment/progress rolls back that batch. Stale previews are rejected. Packages, prices, quotas, billing dates and the completed-migration list are not changed by this action.
+
+### Restore recovery
+
+Expand **Restore the original state** and confirm **Restore recovery backup**. This restores only backed-up plan values and the original progress, including the original stalled condition. Other completed migrations and other listing fields are preserved. Restoration stops without partial changes if a backed-up plan assignment or migration progress was edited later. It cannot detect a value changed away from and then back to the expected value. Metadata row IDs are not restored; plan values and their relative order are restored.
+
+The recovery backup lives in the non-autoloaded `directorist_support_tools_listing_recovery_v1` option and survives deactivation/removal. It is limited to 5,000 changed listings and 4 MB. One recovery backup is retained; an existing completed/restored backup blocks a new unrelated recovery so it cannot be silently overwritten. The JSON download is for evidence/manual recovery, not an automatic import action. It contains listing IDs, plan values and migration metadata, not credentials or contact fields.
+
+## Plan priority repair
 
 A small, manual repair tool for Directorist Pricing Plans 4.x plans that fail to save with:
 
@@ -16,7 +47,7 @@ Legacy plans can retain priority `0`. The current API requires a minimum of `1`,
 4. Reload the plan editor. Save a small test edit, reload to verify persistence, and restore the test content.
 5. Deactivate the tool when finished. No persistent runtime workaround is needed.
 
-The tool only changes invalid priorities on selected plans to `1`. It does not run migrations or change packages, prices, quotas, features, or Directorist settings. Activating it makes no data changes.
+This separate action only changes invalid priorities on selected plans to `1`. It does not run migration recovery or change packages, prices, quotas, features, or Directorist settings.
 
 ## Backup and restoration
 
@@ -33,7 +64,7 @@ Backups survive deactivation and removal, so reinstalling the tool makes them av
 - Up to 200 selected plans per batch.
 - Locally tested with WordPress 7.1.3, Directorist 8.10.5, and Pricing Plans 4.2.0.
 
-This tool addresses this exact data condition. It does not fix unrelated `422` responses, migration failures, or listing-quota errors, and is not a permanent Core compatibility fix.
+Priority repair addresses only that save-validation condition. Migration Recovery addresses only the supported inconsistent listing-migration state. Neither is a general migration reset or permanent Core compatibility fix.
 
 ## Local verification
 
@@ -46,3 +77,13 @@ wp --path=/path/to/local/wordpress eval-file wp-content/plugins/directorist-supp
 Coverage includes the original API save failure, valid-value preservation, selected repair, backup, idempotency, forced database failure and rollback, subsequent API persistence, restoration conflicts, and preservation of other plan fields, packages, and settings. The browser flow is also checked locally.
 
 See [README.txt](README.txt) for operational details and backup storage.
+
+### Migration recovery verification
+
+Run on a disposable `.local` or `.test` site:
+
+```sh
+wp --path=/path/to/local/wordpress --skip-plugins --skip-themes eval-file wp-content/plugins/directorist-support-tools/tests/verify-migration-recovery.php
+```
+
+The test uses isolated disposable tables with 967 synthetic listings. Coverage includes 250/967 reproduction; preview without writes; active and ending package selection; legacy-plan preservation; other-directory packages; duplicate metadata; stale requests; capability/nonce gates; backup-failure rollback; three-batch completion; restoration conflicts; unrelated data preservation; and fixture cleanup. The real local WordPress browser form is also verified through completion.

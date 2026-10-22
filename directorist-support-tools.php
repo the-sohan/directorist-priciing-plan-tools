@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Directorist Support Tools
- * Description: Preview, repair, and restore legacy pricing-plan display priorities that prevent plans from saving.
- * Version: 1.0.0
+ * Description: Preview, back up, repair, and restore Directorist pricing-plan priorities and stalled listing migrations.
+ * Version: 1.1.0
  * Author: Sovware
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -14,6 +14,8 @@ namespace Sovware\DirectoristSupportTools;
 defined( 'ABSPATH' ) || exit;
 
 require_once __DIR__ . '/includes/class-plan-priority-repair.php';
+require_once __DIR__ . '/includes/class-listing-migration-recovery.php';
+require_once __DIR__ . '/includes/migration-recovery-admin.php';
 
 add_action( 'admin_menu', function () {
     add_management_page( 'Directorist Support Tools', 'Directorist Support Tools', 'manage_options', 'directorist-support-tools', __NAMESPACE__ . '\\render_page' );

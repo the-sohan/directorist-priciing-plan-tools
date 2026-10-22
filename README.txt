@@ -1,7 +1,39 @@
-Directorist Support Tools 1.0.0
+Directorist Support Tools 1.1.0
 ==============================
 
-Purpose
+Listing migration recovery
+--------------------------
+Tools > Directorist Migration Recovery supports Pricing Plans 4.2.0 with the
+verified native listing migration implementation. Use it only when unfinished
+running progress remains despite listing-plan-meta-v4-0-2 being recorded complete.
+
+Review the preview, confirm the batch and click Recover next ... listings.
+Repeat until complete, download the backup, verify listings and deactivate.
+Each click executes only the native listing migration for up to 250 listings.
+The existing completed marker remains as a guard against automatic continuation.
+The cursor is preserved. No full v4, package or billing-date repair is invoked.
+
+The action can change _plan_id on eligible listings. Valid legacy assignments
+and listings without an eligible package are preserved. All post statuses are
+included, as in the native migration. Packages, prices, quotas, settings and
+the completed-migration list are not modified by the recovery action.
+
+Prior _plan_id values, expected values and original progress are saved in the
+non-autoloaded directorist_support_tools_listing_recovery_v1 option. Each batch
+and its cumulative backup commit in one transaction; failures roll back the
+batch. InnoDB is required for posts, postmeta, options and user packages.
+The backup is limited to 5,000 changed listings and 4 MB and survives removal.
+An existing completed/restored recovery backup prevents another recovery from
+silently overwriting it. Downloaded JSON has no automatic import action.
+
+Restore recovery backup returns backed-up plan values and original progress,
+including the stalled condition. It rejects later assignment/progress changes
+and preserves other migrations. Values changed away and back cannot be detected.
+Original metadata row IDs are not reused; duplicate-value order is preserved.
+Modified migration source, other versions, failed state, invalid counts and
+ordinary unmarked migrations require investigation rather than this action.
+
+Plan priority repair purpose
 -------
 Repair Pricing Plans 4.x saves that fail with this exact API validation message:
 "The listing_display_priority must be at least 1."
