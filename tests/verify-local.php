@@ -1,6 +1,8 @@
 <?php
 /** Run only on the disposable local WordPress project with wp eval-file. */
 require_once WP_PLUGIN_DIR . '/directorist-support-tools/directorist-support-tools.php';
+// Reproduce the unprotected product failure before testing the manual repair.
+remove_filter( 'directorist_pricing_plan_admin_plan_request', 'Sovware\\DirectoristSupportTools\\normalize_legacy_plan_priority' );
 
 use Sovware\DirectoristSupportTools\Plan_Priority_Repair;
 

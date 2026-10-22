@@ -1,4 +1,4 @@
-Directorist Support Tools 1.1.0
+Directorist Support Tools 1.2.0
 ==============================
 
 Listing migration recovery
@@ -51,15 +51,22 @@ Use on a client site
 4. Select only the affected plans, then click Repair selected plans.
 5. Reload the plan editor, save a small test change, reload to verify, then
    restore the original test content and save again.
-6. Deactivate the tool when finished. The repair and backup remain saved.
+6. Keep active for stale-editor protection, or reload all open plan editors
+   before deactivating. The repaired database values and backup remain saved.
 
 Scope
 -----
 Only selected records in the current site's directorist_plans table with an
 integer priority below 1, or NULL, are changed to 1. Valid priorities are skipped.
-No activation-time repair, runtime request filter, automatic migration, package
-update, quota change, feature change, or pricing change is included.
+No activation-time data repair, automatic migration, package update, quota
+change, feature change, or pricing change is included in this action.
 The UI handles up to 200 plans per batch. Backups accumulate across batches.
+
+While active with Pricing Plans 4.x, the tool also guards admin plan updates
+that submit legacy integer/string priority 0. It preserves an existing valid
+priority, or uses 1 for an invalid stored priority. Other API validation and
+request fields are unchanged. This is useful for older editor tabs that still
+hold 0 after database repair. No data is written by activating this guard.
 
 Restore
 -------
@@ -74,8 +81,14 @@ Compatibility and storage
 -------------------------
 Requires WordPress 6.0+, PHP 7.4+, and active Directorist Pricing Plans 4.x.
 Tested locally with WordPress 7.1.3, Directorist 8.10.5, Pricing Plans 4.2.0.
-InnoDB is required for the plans and options tables to keep data and backup
-changes in one transaction. An unsupported environment stops without repair.
+Plan-priority repair supports InnoDB, MyISAM and Aria tables. InnoDB repairs
+and backups share one transaction. For MyISAM/Aria, an advisory lock serializes
+the tool, and the backup is saved and verified before plan values are changed.
+Each update checks the original priority to avoid overwriting concurrent edits.
+A failure may stop after some plans are repaired; the count is reported and
+the backup remains available for restoration. Table engines are not converted.
+Unknown engines block writes, but still allow the read-only preview.
+The separate Listing Migration Recovery tool still requires InnoDB.
 The backup stores plan IDs, previous priorities, and a UTC repair timestamp in
 the current site's non-autoloaded directorist_support_tools_priority_backup_v1
 option. It is retained when the tool is deactivated or removed; reinstalling

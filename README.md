@@ -1,6 +1,6 @@
-# Directorist Support Tools 1.1.0
+# Directorist Support Tools 1.2.0
 
-Manual tools with preview, transactional backup and restoration. Activation does not repair data. There are two separate Tools pages:
+Manual tools with preview, backup and restoration. Activation does not repair data. There are two separate Tools pages:
 
 - **Directorist Support Tools** repairs invalid plan display priorities.
 - **Directorist Migration Recovery** recovers the specific completed-marker / unfinished-listing-progress conflict described below.
@@ -45,13 +45,15 @@ Legacy plans can retain priority `0`. The current API requires a minimum of `1`,
 2. Activate it and open **Tools → Directorist Support Tools**.
 3. Review the preview, select the affected plans, and choose **Repair selected plans**.
 4. Reload the plan editor. Save a small test edit, reload to verify persistence, and restore the test content.
-5. Deactivate the tool when finished. No persistent runtime workaround is needed.
+5. Keep the tool active for stale-editor protection, or reload all open plan editors before deactivating after repair. The corrected database values remain saved.
 
 This separate action only changes invalid priorities on selected plans to `1`. It does not run migration recovery or change packages, prices, quotas, features, or Directorist settings.
 
+While active on Pricing Plans 4.x, a narrow admin-update filter also handles stale editor tabs submitting integer/string `0` for `listing_display_priority`. It preserves the current valid priority or substitutes `1` for a legacy invalid value. It does not write on activation, alter other request fields, or bypass other API validation. Invalid non-zero inputs remain subject to the product validator. This companion guard survives updates to the main Pricing Plans plugin; keep this tool active if that protection is needed.
+
 ## Backup and restoration
 
-Each repair saves the previous priorities in a non-autoloaded WordPress option in the same database transaction as the repair. Batches accumulate into that backup.
+Each repair saves previous priorities in a non-autoloaded WordPress option. Batches accumulate into that backup. On InnoDB tables, the repair and backup commit in one transaction. For MyISAM/Aria, the tool obtains an advisory lock, saves and reads back the backup before changing any plan, and updates each priority only if its original value still matches. A failure can leave a partially repaired batch; the error reports the count and keeps the backup for restoration. It does not convert table engines.
 
 **Restore previous priorities** restores only this column. It skips plans whose priority is no longer `1` and keeps their backup records for review. Other plan edits are preserved. Restoring invalid values can bring back the save error. It cannot detect a priority changed away from `1` and later changed back to `1`.
 
@@ -60,7 +62,8 @@ Backups survive deactivation and removal, so reinstalling the tool makes them av
 ## Compatibility
 
 - WordPress 6.0+, PHP 7.4+, Directorist Pricing Plans 4.x.
-- InnoDB plans and options tables, to keep the repair and backup atomic.
+- Plan-priority repair: InnoDB, MyISAM or Aria plans/options tables. Unknown storage engines block writes; preview remains available. MyISAM/Aria require database advisory-lock support.
+- Listing Migration Recovery still requires InnoDB for all its tables.
 - Up to 200 selected plans per batch.
 - Locally tested with WordPress 7.1.3, Directorist 8.10.5, and Pricing Plans 4.2.0.
 
@@ -75,6 +78,10 @@ wp --path=/path/to/local/wordpress eval-file wp-content/plugins/directorist-supp
 ```
 
 Coverage includes the original API save failure, valid-value preservation, selected repair, backup, idempotency, forced database failure and rollback, subsequent API persistence, restoration conflicts, and preservation of other plan fields, packages, and settings. The browser flow is also checked locally.
+
+For the guarded official API save flow, run `wp eval-file wp-content/plugins/directorist-support-tools/tests/verify-priority-request.php`. This verifies stale-zero handling, preservation of valid ranks, Unlimited Listing persistence and unrelated validation.
+
+For isolated MyISAM and mixed-engine checks, also run `wp eval-file wp-content/plugins/directorist-support-tools/tests/verify-priority-storage.php` on a disposable `.local` or `.test` project. This checks durable backup before mutation, partial failure reporting/restoration, valid-value preservation and NULL restoration.
 
 See [README.txt](README.txt) for operational details and backup storage.
 

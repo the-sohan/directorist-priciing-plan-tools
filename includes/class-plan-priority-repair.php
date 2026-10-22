@@ -10,6 +10,8 @@ final class Plan_Priority_Repair {
 
     private $db;
     private $plans;
+    private $transactional = true;
+    private $engines = [];
 
     public function __construct() {
         global $wpdb;
@@ -17,7 +19,7 @@ final class Plan_Priority_Repair {
         $this->plans = $wpdb->prefix . 'directorist_plans';
     }
 
-    public function assert_environment(): void {
+    public function assert_environment( bool $writing = true ): void {
         if ( ! function_exists( 'directorist_pricing_plans_version' ) || ! class_exists( '\\DirectoristPricingPlan\\App\\Models\\Plan' ) ) {
             throw new \RuntimeException( 'Activate Directorist and Directorist Pricing Plans 4.x before using this tool.' );
         }
@@ -27,15 +29,25 @@ final class Plan_Priority_Repair {
         }
         foreach ( [ $this->plans, $this->db->options ] as $table ) {
             $status = $this->db->get_row( $this->db->prepare( 'SHOW TABLE STATUS WHERE Name = %s', $table ) );
-            if ( ! $status || 'innodb' !== strtolower( (string) $status->Engine ) ) {
-                throw new \RuntimeException( 'The plans and options tables must use InnoDB so each repair and its backup can be committed together. No plans were changed.' );
+            $engine = $status ? strtolower( (string) $status->Engine ) : '';
+            if ( ! $engine ) {
+                $engine = strtolower( (string) $this->db->get_var( $this->db->prepare( 'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $table ) ) );
             }
+            $this->engines[ $table ] = $engine;
+        }
+        $this->transactional = count( array_filter( $this->engines, static function ( $engine ) { return 'innodb' === $engine; } ) ) === 2;
+        if ( $writing && array_diff( array_values( $this->engines ), [ 'innodb', 'myisam', 'aria' ] ) ) {
+            throw new \RuntimeException( 'The table storage engines could not be verified as InnoDB, MyISAM, or Aria. The preview is available, but repair is blocked. No plans were changed.' );
         }
         $columns = $this->db->get_results( "SHOW COLUMNS FROM `{$this->plans}`", OBJECT_K );
         if ( ! isset( $columns['id'], $columns['title'], $columns['listing_display_priority'] )
             || ! preg_match( '/^(tinyint|smallint|mediumint|int|bigint)\b/i', $columns['listing_display_priority']->Type ) ) {
             throw new \RuntimeException( 'The pricing-plan schema is not supported. No plans were changed.' );
         }
+    }
+
+    public function storage(): array {
+        return [ 'transactional' => $this->transactional, 'engines' => $this->engines ];
     }
 
     public function scan(): array {
@@ -64,6 +76,10 @@ final class Plan_Priority_Repair {
             }
         }
         $ids = array_values( array_unique( array_map( 'intval', $ids ) ) );
+
+        if ( ! $this->transactional ) {
+            return $this->repair_with_durable_backup( $ids );
+        }
 
         $this->begin();
         try {
@@ -103,6 +119,9 @@ final class Plan_Priority_Repair {
 
     public function restore(): array {
         $this->assert_environment();
+        if ( ! $this->transactional ) {
+            return $this->restore_with_durable_backup();
+        }
         $this->begin();
         try {
             $backup = $this->locked_backup();
@@ -130,6 +149,93 @@ final class Plan_Priority_Repair {
             $this->db->query( 'ROLLBACK' );
             $this->clear_backup_cache();
             throw $e;
+        }
+    }
+
+    private function acquire_lock(): string {
+        $name = 'dst_priority_' . md5( $this->plans . '|' . $this->db->options );
+        if ( '1' !== (string) $this->db->get_var( $this->db->prepare( 'SELECT GET_LOCK(%s, 0)', $name ) ) ) {
+            throw new \RuntimeException( 'Another priority repair is running, or the database does not support advisory locks. No plans were changed.' );
+        }
+        return $name;
+    }
+
+    private function release_lock( string $name ): void {
+        $this->db->get_var( $this->db->prepare( 'SELECT RELEASE_LOCK(%s)', $name ) );
+        $this->clear_backup_cache();
+    }
+
+    private function persist_and_verify_backup( array $backup ): void {
+        $this->write_backup( $backup );
+        $stored = $this->db->get_var( $this->db->prepare( "SELECT option_value FROM `{$this->db->options}` WHERE option_name = %s", self::BACKUP_OPTION ) );
+        if ( maybe_serialize( $backup ) !== $stored ) {
+            throw new \RuntimeException( 'The previous priorities could not be verified in the database backup. No further plans were changed.' );
+        }
+    }
+
+    private function repair_with_durable_backup( array $ids ): int {
+        $lock = $this->acquire_lock();
+        $repaired = 0;
+        try {
+            $backup = $this->locked_backup();
+            $slots = implode( ', ', array_fill( 0, count( $ids ), '%d' ) );
+            $rows = $this->db->get_results( $this->db->prepare( "SELECT id, listing_display_priority FROM `{$this->plans}` WHERE id IN ({$slots}) AND (listing_display_priority < 1 OR listing_display_priority IS NULL) ORDER BY id", $ids ) );
+            if ( null === $rows ) {
+                throw new \RuntimeException( 'Could not read the selected plans.' );
+            }
+            foreach ( $rows as $row ) {
+                if ( ! array_key_exists( (int) $row->id, $backup['rows'] ) ) {
+                    $backup['rows'][ (int) $row->id ] = null === $row->listing_display_priority ? null : (int) $row->listing_display_priority;
+                }
+            }
+            if ( count( $backup['rows'] ) > 5000 ) {
+                throw new \RuntimeException( 'The repair backup limit was reached. Ask a developer to review it.' );
+            }
+            if ( $rows ) {
+                $backup['updated_at'] = gmdate( 'Y-m-d H:i:s' );
+                // On MyISAM/Aria, persist and read back the backup BEFORE any plan update.
+                $this->persist_and_verify_backup( $backup );
+            }
+            foreach ( $rows as $row ) {
+                $where = null === $row->listing_display_priority ? 'listing_display_priority IS NULL' : $this->db->prepare( 'listing_display_priority = %d', $row->listing_display_priority );
+                $changed = $this->db->query( $this->db->prepare( "UPDATE `{$this->plans}` SET listing_display_priority = 1 WHERE id = %d AND {$where}", $row->id ) );
+                if ( 1 !== $changed ) {
+                    throw new \RuntimeException( 'A plan changed concurrently or could not be updated. Reload the preview before continuing.' );
+                }
+                ++$repaired;
+            }
+            return $repaired;
+        } catch ( \Throwable $e ) {
+            throw new \RuntimeException( sprintf( '%d plan(s) repaired before the batch stopped. Saved previous values were retained. %s', $repaired, $e->getMessage() ), 0, $e );
+        } finally {
+            $this->release_lock( $lock );
+        }
+    }
+
+    private function restore_with_durable_backup(): array {
+        $lock = $this->acquire_lock();
+        $result = [ 'restored' => 0, 'skipped' => 0 ];
+        try {
+            $backup = $this->locked_backup();
+            foreach ( $backup['rows'] as $id => $old ) {
+                $value = null === $old ? 'NULL' : (string) (int) $old;
+                $changed = $this->db->query( $this->db->prepare( "UPDATE `{$this->plans}` SET listing_display_priority = {$value} WHERE id = %d AND listing_display_priority = 1", $id ) );
+                if ( false === $changed ) {
+                    throw new \RuntimeException( 'A plan could not be restored. Previous backup entries were retained; reload before continuing.' );
+                }
+                if ( 0 === $changed ) {
+                    ++$result['skipped'];
+                    continue;
+                }
+                ++$result['restored'];
+                unset( $backup['rows'][ $id ] );
+                $this->persist_and_verify_backup( $backup );
+            }
+            return $result;
+        } catch ( \Throwable $e ) {
+            throw new \RuntimeException( sprintf( '%d plan(s) restored before the batch stopped. %s', $result['restored'], $e->getMessage() ), 0, $e );
+        } finally {
+            $this->release_lock( $lock );
         }
     }
 

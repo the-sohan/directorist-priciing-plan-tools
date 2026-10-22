@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Directorist Support Tools
  * Description: Preview, back up, repair, and restore Directorist pricing-plan priorities and stalled listing migrations.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Sovware
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -14,6 +14,7 @@ namespace Sovware\DirectoristSupportTools;
 defined( 'ABSPATH' ) || exit;
 
 require_once __DIR__ . '/includes/class-plan-priority-repair.php';
+require_once __DIR__ . '/includes/plan-priority-request.php';
 require_once __DIR__ . '/includes/class-listing-migration-recovery.php';
 require_once __DIR__ . '/includes/migration-recovery-admin.php';
 
@@ -71,20 +72,26 @@ function render_page() {
         <h2>Plan save repair</h2>
         <p>Use this tool when a plan save returns <code>422</code> with <code>The listing_display_priority must be at least 1.</code></p>
         <p>Preview legacy priorities below 1, then select the plans to repair. This tool changes only the selected plans’ display priority to <strong>1</strong>. Packages, prices, quotas, features, and migration state are left alone.</p>
+        <p>While active, the tool also protects saves from older editor tabs that still submit priority 0. It keeps an existing valid priority, or uses 1 for a legacy invalid priority. All other API validation remains in place.</p>
         <?php if ( is_array( $notice ) ) : ?>
             <div class="notice notice-<?php echo esc_attr( $notice['type'] ); ?>"><p><?php echo esc_html( $notice['message'] ); ?></p></div>
         <?php endif; ?>
         <?php
         try {
-            $repair->assert_environment();
+            $repair->assert_environment( false );
             $scan = $repair->scan();
             $backup = $repair->backup();
+            $storage = $repair->storage();
         } catch ( \Throwable $e ) {
             echo '<div class="notice notice-error"><p>' . esc_html( $e->getMessage() ) . '</p></div></div>';
             return;
         }
         ?>
         <p><strong><?php echo esc_html( $scan['total'] ); ?> plan(s) need repair.</strong> Pricing Plans version: <?php echo esc_html( directorist_pricing_plans_version() ); ?>.</p>
+        <p>Table engines: <?php echo esc_html( implode( ', ', array_map( static function ( $engine ) { return $engine ?: 'unknown'; }, $storage['engines'] ) ) ); ?>.</p>
+        <?php if ( ! $storage['transactional'] ) : ?>
+            <p>For MyISAM/Aria tables, previous priorities are saved and verified before any repair. A failed batch can stop after some plans are repaired; their backups remain available. Unknown engines block repair.</p>
+        <?php endif; ?>
         <?php if ( $scan['rows'] ) : ?>
             <?php if ( $scan['total'] > Plan_Priority_Repair::BATCH_SIZE ) : ?>
                 <p>Showing the first <?php echo esc_html( Plan_Priority_Repair::BATCH_SIZE ); ?> plans. Repair these, then scan the remaining plans on this page.</p>
