@@ -19,8 +19,8 @@ foreach ( [ $plans, $options ] as $table ) {
 $assert = static function ( $ok, $message ) { if ( ! $ok ) { throw new RuntimeException( $message ); } };
 
 try {
-    foreach ( [ 'InnoDB', 'MyISAM' ] as $option_engine ) {
-        $assert( false !== $wpdb->query( "CREATE TABLE `{$plans}` (id bigint unsigned NOT NULL PRIMARY KEY, title varchar(255), listing_display_priority int NULL, price decimal(10,2), allowed_listings int) ENGINE=MyISAM" ), 'Could not create test plans' );
+    foreach ( [ [ 'MyISAM', 'InnoDB' ], [ 'MyISAM', 'MyISAM' ], [ 'InnoDB', 'MyISAM' ] ] as [ $plan_engine, $option_engine ] ) {
+        $assert( false !== $wpdb->query( "CREATE TABLE `{$plans}` (id bigint unsigned NOT NULL PRIMARY KEY, title varchar(255), listing_display_priority int NULL, price decimal(10,2), allowed_listings int) ENGINE={$plan_engine}" ), 'Could not create test plans' );
         $assert( false !== $wpdb->query( "CREATE TABLE `{$options}` (option_id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY, option_name varchar(191) NOT NULL UNIQUE, option_value longtext NOT NULL, autoload varchar(20) NOT NULL) ENGINE={$option_engine}" ), 'Could not create test options' );
         $wpdb->query( "INSERT INTO `{$plans}` VALUES (1,'zero',0,297,5),(2,'null',NULL,49,3),(3,'valid',7,99,10)" );
         $db = clone $wpdb;
@@ -49,7 +49,7 @@ try {
         $wpdb->query( "UPDATE `{$plans}` SET listing_display_priority=1 WHERE id=2" );
         $assert( [ 'restored' => 1, 'skipped' => 0 ] === $repair->restore(), 'NULL restore failed' );
         $assert( $original === $rows(), 'Repair/restore changed unrelated fields or valid priorities' );
-        echo "PASS: MyISAM plans / {$option_engine} options preview, backup, repair, idempotency, restore conflicts, NULL and field preservation\n";
+        echo "PASS: {$plan_engine} plans / {$option_engine} options preview, backup, repair, idempotency, restore conflicts, NULL and field preservation\n";
 
         // A backup write error must stop before any plan is changed.
         $wpdb->query( "CREATE TRIGGER `{$trigger}` BEFORE UPDATE ON `{$options}` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='DST QA backup failure'" );
